@@ -1,12 +1,11 @@
 /* 
- * File:   ecu_led_cfg.h
- * Author: hp
- *
- * Created on 31 ?????, 2023, 11:21 ?
+ * File:   ecu_sev_seg_cfg.h
+ * Author: Ziad
+ * Created on 24 July, 2024, 04:26 
  */
 
-#ifndef ECU_LED_CFG_H
-#define	ECU_LED_CFG_H
+#ifndef ECU_SEV_SEG_CFG_H
+#define	ECU_SEV_SEG_CFG_H
 
 /* Section : includes */
 
@@ -19,5 +18,5 @@
 
 /* Section : Function Declarations */
 
-#endif	/* ECU_LED_CFG_H */
+#endif	/* ECU_SEV_SEG_CFG_H */
 
