@@ -2,7 +2,7 @@
 ## Driver for PIC18F4620 with many projects. 
 ## For more information : [https://rightful-hawk-670.notion.site/microcontroller-38c62297c2804bcc8aa5715c66834b3b?pvs=4](url)
 ## Layers
-  ### 1) ** MCAL layer **
+  ### 1) __MCAL layer__
        a) Device config
        b) MCAL_STD_Types ( standard types )
        c) STD_Libraries  ( standard libraries )
@@ -18,7 +18,7 @@
          * HAL_Timer0
      
 -------------------------------------------------------------------------------------------------------------------------
-  ### 2) ** ECU layer **
+  ### 2) __ECU layer__
        a) ECU_Layer_Initialization : is used to initialize ECU modules instead of initialize it in application layer (readability).
        b) Button
          * Button
@@ -39,7 +39,7 @@
          * Relay
          * Relay_Config
 ------------------------------------------------------------------------------------------------------------------------
- ### 3) ** Application Layer **
+ ### 3) __Application Layer__
        a) applicaion ( in header file )
 ------------------------------------------------------------------------------------------------------------------------
   4) Project Layer
