@@ -2,9 +2,8 @@
  * File:   application.c
  * Author: ziad
  *
- * Created on 09 ?????, 2023, 09:50 
+ * Created on 20 July, 2023
  */
-
 
 #include "application.h"
 
