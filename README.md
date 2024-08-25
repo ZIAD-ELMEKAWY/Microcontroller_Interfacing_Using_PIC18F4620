@@ -44,5 +44,11 @@
 ------------------------------------------------------------------------------------------------------------------------
   4) Project Layer
        a) Traffic Control ( is an aaplication.c ) 
-
+       b) Password security system ( is an aaplication.c )
+       c) Joystick wheelchair  ( is an aaplication.c )
+       d) Autonomus Car  ( is an aaplication.c )
+       e) Interface EUSART Transmit and receive  ( is an aaplication.c )
+       f) Calculator  ( is an aaplication.c )
+       g) Smart home  ( is an aaplication.c ) 
+     
 ------------------------------------------------------------------------------------------------------------------------
