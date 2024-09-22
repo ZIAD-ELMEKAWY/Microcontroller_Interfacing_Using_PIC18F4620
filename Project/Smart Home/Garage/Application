@@ -1,0 +1,336 @@
+/* 
+ * File:   application.c
+ * Author: Ziad Elmekawy 
+ *
+ * Created on 25 August, 2024
+ */
+/******************* ^-^ Includes ^-^ *****************/
+#include "application.h"
+#include "ECU_Layer/Char_LCD/ecu_char_lcd.h"
+#include "ECU_Layer/Buzzer/ecu_buzzer.h"
+#include "ECU_Layer/DC_Motor/ecu_dc_motor.h"
+#include "ECU_Layer/LED/ecu_led.h"
+#include "MCAL_Layer/ADC/hal_ADC.h"
+#include "MCAL_Layer/Interrupt/mcal_external_interrupt.h"
+#include "MCAL_Layer/USART/hal_usart.h"
+
+/******************* ^-^ Macro Definition ^-^ *****************/
+
+/******************* ^-^ Helper Function ^-^ *****************/
+void RB4_HIGH_Int_App_ISR(void);
+void RB4_LOW_Int_App_ISR(void);
+void RB5_HIGH_Int_App_ISR(void);
+void RB5_LOW_Int_App_ISR(void);
+void init_ultrasonic(void);
+uint16 measure_distance(void);
+void init_timer(void);
+
+
+/******************* ^-^ Object Declaration ^-^ *****************/
+// LCD 4-Bit
+chr_lcd_4bit_t  lcd_2 =
+{ 
+    .lcd_data[0].port  = PORTC_INDEX ,
+    .lcd_data[0].pin = PIN0 ,
+    .lcd_data[0].direction = GPIO_DIRECTION_OUTPUT ,
+    .lcd_data[0].logic = GPIO_LOW ,
+    
+    .lcd_data[1].port  = PORTC_INDEX ,
+    .lcd_data[1].pin = PIN1 ,
+    .lcd_data[1].direction = GPIO_DIRECTION_OUTPUT ,
+    .lcd_data[1].logic = GPIO_LOW ,
+    
+    .lcd_data[2].port  = PORTC_INDEX ,
+    .lcd_data[2].pin = PIN2 ,
+    .lcd_data[2].direction = GPIO_DIRECTION_OUTPUT ,
+    .lcd_data[2].logic = GPIO_LOW ,
+    
+    .lcd_data[3].port  = PORTC_INDEX ,
+    .lcd_data[3].pin = PIN3 ,
+    .lcd_data[3].direction = GPIO_DIRECTION_OUTPUT ,
+    .lcd_data[3].logic = GPIO_LOW ,
+    
+    .lcd_rs = PORTC_INDEX ,
+    .lcd_rs.pin = PIN4 ,
+    .lcd_rs.direction = GPIO_DIRECTION_OUTPUT ,
+    .lcd_rs.logic = GPIO_LOW ,
+    
+    .lcd_en = PORTC_INDEX ,
+    .lcd_en.pin = PIN5 ,
+    .lcd_en.direction = GPIO_DIRECTION_OUTPUT ,
+    .lcd_en.logic = GPIO_LOW 
+};
+
+// BUZZER
+buz_t buz2 = 
+{
+    .port_name = PORTB_INDEX ,
+    .pin = PIN7 ,
+    .buz_status = GPIO_LOW
+};
+
+// INT RBx
+interrupt_RBx_t rb4_int_obj_flame = 
+{
+    .EXT_InterruptHandlerHigh = RB4_HIGH_Int_App_ISR ,
+    .EXT_InterruptHandlerLow  = RB4_LOW_Int_App_ISR ,
+    .priority = INTERRUPT_HIGH_PRIORITY ,
+    .mcu_pin.port = PORTB_INDEX ,
+    .mcu_pin.pin = PIN4 ,
+    .mcu_pin.direction = GPIO_DIRECTION_INPUT 
+}; 
+interrupt_RBx_t rb5_int_obj_Gas = 
+{
+    .EXT_InterruptHandlerHigh = RB5_HIGH_Int_App_ISR ,
+    .EXT_InterruptHandlerLow  = RB5_LOW_Int_App_ISR ,
+    .priority = INTERRUPT_HIGH_PRIORITY ,
+    .mcu_pin.port = PORTB_INDEX ,
+    .mcu_pin.pin = PIN5 ,
+    .mcu_pin.direction = GPIO_DIRECTION_INPUT 
+}; 
+
+// LM35 Temperature Sensor 
+adc_config_t LM35 = {
+    .ADC_InterruptHandler = NULL,
+    .acquisition_time = ADC_12_TAD,
+    .adc_channel = ADC_CHANNEL_AN0,
+    .conversion_clock = ADC_CONVERSION_CLOCK_FOSC_DIV_16,
+    .result_format = ADC_RESULT_RIGHT,
+    .voltage_reference = ADC_VOLTAGE_REFRENCE_DISABLE
+};
+
+// Motor
+dc_motor_t Motor_3 =
+{
+   .dc_motor_pin[0].port = PORTD_INDEX , 
+   .dc_motor_pin[0].pin  = PIN2 ,
+   .dc_motor_pin[0].direction = GPIO_DIRECTION_OUTPUT ,
+   .dc_motor_pin[0].logic = GPIO_LOW ,
+   
+   .dc_motor_pin[1].port = PORTD_INDEX , 
+   .dc_motor_pin[1].pin  = PIN3 ,
+   .dc_motor_pin[1].direction = GPIO_DIRECTION_OUTPUT ,
+   .dc_motor_pin[1].logic = GPIO_LOW 
+};
+dc_motor_t Motor_4 =
+{
+   .dc_motor_pin[0].port = PORTD_INDEX , 
+   .dc_motor_pin[0].pin  = PIN4 ,
+   .dc_motor_pin[0].direction = GPIO_DIRECTION_OUTPUT ,
+   .dc_motor_pin[0].logic = GPIO_LOW ,
+   
+   .dc_motor_pin[1].port = PORTD_INDEX , 
+   .dc_motor_pin[1].pin  = PIN5 ,
+   .dc_motor_pin[1].direction = GPIO_DIRECTION_OUTPUT ,
+   .dc_motor_pin[1].logic = GPIO_LOW 
+};
+
+// LED
+led_t AC_LED = 
+{
+    .port_name = PORTD_INDEX ,
+    .pin = PIN6 ,
+    .led_status = GPIO_LOW
+};
+led_t Light_LED = 
+{
+    .port_name = PORTD_INDEX ,
+    .pin = PIN7 ,
+    .led_status = GPIO_LOW
+};
+
+// EUSART
+void usart_module_init(void)
+{
+    Std_ReturnType ret = E_NOK ;
+    usart_t usart_obj ;
+    /* Baud rate Initialize */
+    usart_obj.baudrate = 9600;
+    usart_obj.baudrate_gen_config = BAUDRATE_ASYN_8BIT_LOW_SPEED ;
+    /* Transmit Initialize */
+    usart_obj.usart_tx_cfg.usart_tx_enable = EUSART_ASYNCHRONOUS_TX_DISABLE ;
+    usart_obj.usart_tx_cfg.usart_tx_interrupt_enable = EUSART_ASYNCHRONOUS_INTERRUPT_TX_DISABLE ;
+    usart_obj.usart_tx_cfg.usart_tx_9bit_enable = EUSART_ASYNCHRONOUS_9BIT_TX_DISABLE ;
+    /* Receiver Initialize */
+    usart_obj.usart_rx_cfg.usart_rx_enable = EUSART_ASYNCHRONOUS_RX_ENABLE ;
+    usart_obj.usart_rx_cfg.usart_rx_interrupt_enable = EUSART_ASYNCHRONOUS_INTERRUPT_RX_DISABLE ;
+    usart_obj.usart_rx_cfg.usart_rx_9bit_enable = EUSART_ASYNCHRONOUS_9BIT_RX_DISABLE ;
+    /* Pointers Initialize */
+    usart_obj.EUSART_TxDefaultInterruptHandler = NULL ;
+    usart_obj.EUSART_RxDefaultInterruptHandler = NULL ;
+    usart_obj.EUSART_FramingErrorHandler = NULL ;
+    usart_obj.EUSART_OverrunErrorHandler = NULL ;
+    
+    /* Initialization Function */
+    ret = EUSART_ASYNC_Init(&usart_obj);
+}
+
+/* ======= Global Variables ======= */
+volatile uint16 distance = 0 ;
+volatile uint8 Str_distance[5];
+volatile uint16 lm35_res_1 = 0;
+volatile uint16 lm35_res_1_Celsius_mv = 0;
+volatile uint8 lm35_res_1_txt[3];
+volatile uint8 l_rec_usart_data = 0 ; 
+volatile uint8 usart_string[3];
+
+#define TRIG_PIN LATDbits.LATD0  // Trigger pin
+#define ECHO_PIN PORTDbits.RD1   // Echo pin
+
+/****************************** ^-^ Main Function Start ^-^ ***********************/
+int main() 
+{
+    Std_ReturnType ret = E_NOK ;
+    
+    // Initialize the Ultrasonic Sensor and Timer
+    init_ultrasonic();
+    init_timer();
+    application_initialize();
+    usart_module_init();
+    
+   
+    while(1)
+    {
+        ret = EUSART_ASYNC_ReadByteBlocking(&l_rec_usart_data);
+        if(247 == l_rec_usart_data )
+        {
+            ret = LCD_4bit_Send_Command(&lcd_2 , _LCD_CLEAR);
+            ret = LCD_4bit_Send_String_Pos(&lcd_2 , " Welcome to Your " , 1 , 1 );
+            ret = LCD_4bit_Send_String_Pos(&lcd_2 , " Smart Garage " , 2 , 3 );
+            __delay_ms(200);
+            ret = LCD_4bit_Send_Command(&lcd_2 , _LCD_CLEAR);
+            // Distance
+            distance = measure_distance();  // Measure distance
+            ret = LCD_4bit_Send_String_Pos(&lcd_2 , " Distance :" , 1 , 1);
+            ret = LCD_4bit_Send_String_Pos(&lcd_2 , " Temp : " , 2 , 1 );
+            ret = LCD_4bit_Send_String_Pos(&lcd_2 , " Fire :  " , 3 , 1);
+            ret = LCD_4bit_Send_String_Pos(&lcd_2 , " Gas : " , 4 , 1);
+                // Distance for Garage Gate
+                ret = convert_uint16_to_string(distance , Str_distance);
+                ret = LCD_4bit_Send_String_Pos(&lcd_2 , Str_distance , 1 , 13);
+                if (distance <= 5)
+                {
+                    // Motor Gate 
+                    ret = ret = dc_motor_move_right(&Motor_4);
+                    __delay_ms(500);
+                    ret = dc_motor_stop(&Motor_4);
+                }
+                else 
+                {
+                    ret = dc_motor_stop(&Motor_4);
+                }
+                // Light 
+                ret = led_turn_on(&Light_LED);
+                
+                /* ^-^ Sensors ^-^ */
+                    // Temperature 
+                ret = ADC_GetConversion_Blocking(&LM35, &lm35_res_1, ADC_CHANNEL_AN0);
+                lm35_res_1_Celsius_mv = lm35_res_1 * 4.88f; /* 5000(mv) / 1024(10-Bit) => 4.88 */
+                lm35_res_1_Celsius_mv /= 10; /* The sensitivity of LM35 is 10 mV/degree Celsius */
+                ret = convert_uint16_to_string(lm35_res_1_Celsius_mv, lm35_res_1_txt);
+                ret = LCD_4bit_Send_String_Pos(&lcd_2,  lm35_res_1_txt , 2 , 9 );
+                if (lm35_res_1_Celsius_mv > 30)
+                {
+                    ret = led_turn_on(&AC_LED);
+                }
+                else 
+                {
+                    ret = led_turn_off(&AC_LED);
+                }
+                    // Fire
+                ret = LCD_4bit_Send_String_Pos(&lcd_2 , "Not Detected " , 3 , 8);
+                    // Gas
+                ret = LCD_4bit_Send_String_Pos(&lcd_2 , "Not Detected " , 4 , 8);
+            }
+        else 
+        {
+            ret = LCD_4bit_Send_String_Pos(&lcd_2 , "Smart Garage " , 1 ,5);
+        }
+    }
+    return (EXIT_SUCCESS);
+}
+/****************************** ^-^ Main Function End ^-^ ************************/
+/******************* ^-^ application_initialize Function Start ^-^ ****************/
+void application_initialize (void)
+{
+    Std_ReturnType ret = E_NOK ;
+    ecu_layer_initialize();
+    ret = led_intialize(&AC_LED);
+    ret = led_intialize(&Light_LED);
+    ret = LCD_4bit_Initialize(&lcd_2);
+    ret = buz_intialize(&buz2);
+    ret = dc_motor_initialize(&Motor_3);
+    ret = dc_motor_initialize(&Motor_4);
+    ret = Interrupt_RBx_Initialize(&rb4_int_obj_flame);
+    ret = Interrupt_RBx_Initialize(&rb5_int_obj_Gas);
+    ret = ADC_Init(&LM35);
+}
+/******************* ^-^ application_initialize Function End ^-^ *****************/
+/******************* ^-^ Helper Function ^-^ *****************/
+void init_ultrasonic(void) {
+    TRISDbits.TRISD0 = 0;  // TRIG_PIN as output
+    TRISDbits.TRISD1 = 1;  // ECHO_PIN as input
+    TRIG_PIN = 0;          // Set TRIG_PIN low
+}
+
+void init_timer(void) {
+    T1CON = 0x10;  // Configure Timer1 with 1:2 prescale
+}
+
+uint16 measure_distance(void) {
+    uint16 time = 0;
+    uint16 l_distance = 0;
+
+    // Send a 10us pulse to the TRIG_PIN
+    TRIG_PIN = 1;
+    __delay_us(10);
+    TRIG_PIN = 0;
+
+    // Wait for the ECHO_PIN to go high
+    while(!ECHO_PIN);
+
+    // Start Timer1 when ECHO_PIN goes high
+    TMR1H = 0;
+    TMR1L = 0;
+    T1CONbits.TMR1ON = 1;
+
+    // Wait for the ECHO_PIN to go low
+    while(ECHO_PIN);
+
+    // Stop Timer1 and calculate the time
+    T1CONbits.TMR1ON = 0;
+    time = (TMR1H << 8) + TMR1L;
+
+    // Calculate distance in cm (speed of sound is approximately 343 m/s)
+    l_distance = ((time * 0.034) / 2)/111;
+    
+    return l_distance;
+}
+// Fire
+void RB4_HIGH_Int_App_ISR(void)
+{
+    Std_ReturnType ret = E_NOK ;
+    ret = dc_motor_move_right(&Motor_3);
+    ret = LCD_4bit_Send_String_Pos(&lcd_2 , " Detected     " , 3 , 8);
+    ret = buz_turn_on(&buz2);
+}
+void RB4_LOW_Int_App_ISR(void)
+{
+    Std_ReturnType ret = E_NOK ;
+    ret = dc_motor_stop(&Motor_3);
+    ret = buz_turn_off(&buz2);
+}
+// Gas
+void RB5_HIGH_Int_App_ISR(void)
+{
+    Std_ReturnType ret = E_NOK ;
+    ret = led_turn_on(&AC_LED);
+    ret = LCD_4bit_Send_String_Pos(&lcd_2 , " Detected     " , 4 , 8);
+    ret = buz_turn_on(&buz2);
+}
+void RB5_LOW_Int_App_ISR(void)
+{
+    Std_ReturnType ret = E_NOK ;
+    ret = led_turn_off(&AC_LED);
+    ret = buz_turn_off(&buz2);
+}
