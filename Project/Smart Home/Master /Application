@@ -1,0 +1,354 @@
+/* 
+ * File:   application.c
+ * Author: Ziad Elmekawy 
+ *
+ * Created on 25 August, 2024
+ */
+/******************* ^-^ Includes ^-^ *****************/
+#include "application.h"
+#include "ECU_Layer/Char_LCD/ecu_char_lcd.h"
+#include "ECU_Layer/Buzzer/ecu_buzzer.h"
+#include "ECU_Layer/DC_Motor/ecu_dc_motor.h"
+#include "ECU_Layer/Keypad/ecu_keypad.h"
+#include "MCAL_Layer/Interrupt/mcal_external_interrupt.h"
+#include "MCAL_Layer/USART/hal_usart.h"
+
+/******************* ^-^ Macro Definition ^-^ *****************/
+
+/******************* ^-^ Helper Function ^-^ *****************/
+uint8 Check_Password_Validation (uint8 Arr[10] , uint8 Arr_Length );
+void Restart_system (void);
+void RB4_HIGH_Int_App_ISR(void);
+void RB4_LOW_Int_App_ISR(void);
+
+/******************* ^-^ Object Declaration ^-^ *****************/
+// LCD 4-Bit
+chr_lcd_4bit_t lcd_1 =
+{ 
+    .lcd_data[0].port  = PORTC_INDEX ,
+    .lcd_data[0].pin = PIN0 ,
+    .lcd_data[0].direction = GPIO_DIRECTION_OUTPUT ,
+    .lcd_data[0].logic = GPIO_LOW ,
+    
+    .lcd_data[1].port  = PORTC_INDEX ,
+    .lcd_data[1].pin = PIN1 ,
+    .lcd_data[1].direction = GPIO_DIRECTION_OUTPUT ,
+    .lcd_data[1].logic = GPIO_LOW ,
+    
+    .lcd_data[2].port  = PORTC_INDEX ,
+    .lcd_data[2].pin = PIN2 ,
+    .lcd_data[2].direction = GPIO_DIRECTION_OUTPUT ,
+    .lcd_data[2].logic = GPIO_LOW ,
+    
+    .lcd_data[3].port  = PORTC_INDEX ,
+    .lcd_data[3].pin = PIN3 ,
+    .lcd_data[3].direction = GPIO_DIRECTION_OUTPUT ,
+    .lcd_data[3].logic = GPIO_LOW ,
+    
+    .lcd_rs = PORTC_INDEX ,
+    .lcd_rs.pin = PIN4 ,
+    .lcd_rs.direction = GPIO_DIRECTION_OUTPUT ,
+    .lcd_rs.logic = GPIO_LOW ,
+    
+    .lcd_en = PORTC_INDEX ,
+    .lcd_en.pin = PIN5 ,
+    .lcd_en.direction = GPIO_DIRECTION_OUTPUT ,
+    .lcd_en.logic = GPIO_LOW 
+};
+
+// BUZZER
+buz_t buz1 = 
+{
+    .port_name = PORTD_INDEX ,
+    .pin = PIN6 ,
+    .buz_status = GPIO_LOW
+};
+
+// INT RBx
+interrupt_RBx_t rb4_int_obj = 
+{
+    .EXT_InterruptHandlerHigh = RB4_HIGH_Int_App_ISR ,
+    .EXT_InterruptHandlerLow  = RB4_LOW_Int_App_ISR ,
+    .priority = INTERRUPT_HIGH_PRIORITY ,
+    .mcu_pin.port = PORTB_INDEX ,
+    .mcu_pin.pin = PIN4 ,
+    .mcu_pin.direction = GPIO_DIRECTION_INPUT 
+}; 
+
+// Keypad
+keypad_t Keypad_1 = 
+{ 
+    // Rows
+    .keypad_row_pins[0].port = PORTA_INDEX ,
+    .keypad_row_pins[0].pin = PIN0 ,
+    .keypad_row_pins[0].direction = GPIO_DIRECTION_OUTPUT ,
+    .keypad_row_pins[0].logic = GPIO_LOW , 
+            
+    .keypad_row_pins[1].port = PORTA_INDEX ,
+    .keypad_row_pins[1].pin = PIN1 ,
+    .keypad_row_pins[1].direction = GPIO_DIRECTION_OUTPUT ,
+    .keypad_row_pins[1].logic = GPIO_LOW,
+            
+    .keypad_row_pins[2].port = PORTA_INDEX ,
+    .keypad_row_pins[2].pin = PIN2 ,
+    .keypad_row_pins[2].direction = GPIO_DIRECTION_OUTPUT ,
+    .keypad_row_pins[2].logic = GPIO_LOW,
+            
+    .keypad_row_pins[3].port = PORTA_INDEX ,
+    .keypad_row_pins[3].pin = PIN3 ,
+    .keypad_row_pins[3].direction = GPIO_DIRECTION_OUTPUT ,
+    .keypad_row_pins[3].logic = GPIO_LOW,
+    
+    // Columns 
+    .keypad_column_pins[0].port = PORTB_INDEX ,
+    .keypad_column_pins[0].pin = PIN0 ,
+    .keypad_column_pins[0].direction =  GPIO_DIRECTION_INPUT,
+    .keypad_column_pins[0].logic = GPIO_LOW , 
+            
+    .keypad_column_pins[1].port = PORTB_INDEX ,
+    .keypad_column_pins[1].pin = PIN1 ,
+    .keypad_column_pins[1].direction = GPIO_DIRECTION_INPUT ,
+    .keypad_column_pins[1].logic = GPIO_LOW,
+            
+    .keypad_column_pins[2].port = PORTB_INDEX ,
+    .keypad_column_pins[2].pin = PIN2 ,
+    .keypad_column_pins[2].direction = GPIO_DIRECTION_INPUT ,
+    .keypad_column_pins[2].logic = GPIO_LOW,
+            
+    .keypad_column_pins[3].port = PORTB_INDEX ,
+    .keypad_column_pins[3].pin = PIN3 ,
+    .keypad_column_pins[3].direction = GPIO_DIRECTION_INPUT ,
+    .keypad_column_pins[3].logic = GPIO_LOW
+};
+
+// Motor
+dc_motor_t Motor_1 =
+{
+   .dc_motor_pin[0].port = PORTD_INDEX , 
+   .dc_motor_pin[0].pin  = PIN2 ,
+   .dc_motor_pin[0].direction = GPIO_DIRECTION_OUTPUT ,
+   .dc_motor_pin[0].logic = GPIO_LOW ,
+   
+   .dc_motor_pin[1].port = PORTD_INDEX , 
+   .dc_motor_pin[1].pin  = PIN3 ,
+   .dc_motor_pin[1].direction = GPIO_DIRECTION_OUTPUT ,
+   .dc_motor_pin[1].logic = GPIO_LOW 
+};
+dc_motor_t Motor_2 =
+{
+   .dc_motor_pin[0].port = PORTD_INDEX , 
+   .dc_motor_pin[0].pin  = PIN4 ,
+   .dc_motor_pin[0].direction = GPIO_DIRECTION_OUTPUT ,
+   .dc_motor_pin[0].logic = GPIO_LOW ,
+   
+   .dc_motor_pin[1].port = PORTD_INDEX , 
+   .dc_motor_pin[1].pin  = PIN5 ,
+   .dc_motor_pin[1].direction = GPIO_DIRECTION_OUTPUT ,
+   .dc_motor_pin[1].logic = GPIO_LOW 
+};
+
+// EUSART 
+void usart_module_init(void)
+{
+    Std_ReturnType ret = E_NOK ;
+    usart_t usart_obj ;
+    /* Baud rate Initialize */
+    usart_obj.baudrate = 9600;
+    usart_obj.baudrate_gen_config = BAUDRATE_ASYN_8BIT_LOW_SPEED ;
+    /* Transmit Initialize */
+    usart_obj.usart_tx_cfg.usart_tx_enable = EUSART_ASYNCHRONOUS_TX_ENABLE ;
+    usart_obj.usart_tx_cfg.usart_tx_interrupt_enable = EUSART_ASYNCHRONOUS_INTERRUPT_TX_DISABLE ;
+    usart_obj.usart_tx_cfg.usart_tx_9bit_enable = EUSART_ASYNCHRONOUS_9BIT_TX_DISABLE ;
+    /* Receiver Initialize */
+    usart_obj.usart_rx_cfg.usart_rx_enable = EUSART_ASYNCHRONOUS_RX_DISABLE ;
+    usart_obj.usart_rx_cfg.usart_rx_interrupt_enable = EUSART_ASYNCHRONOUS_INTERRUPT_RX_DISABLE ;
+    usart_obj.usart_rx_cfg.usart_rx_9bit_enable = EUSART_ASYNCHRONOUS_9BIT_RX_DISABLE ;
+    /* Pointers Initialize */
+    usart_obj.EUSART_TxDefaultInterruptHandler = NULL ;
+    usart_obj.EUSART_RxDefaultInterruptHandler = NULL ;
+    usart_obj.EUSART_FramingErrorHandler = NULL ;
+    usart_obj.EUSART_OverrunErrorHandler = NULL ;
+    
+    /* Initialization Function */
+    ret = EUSART_ASYNC_Init(&usart_obj);
+}
+
+/* ======= Global Variables ======= */
+volatile uint8 KPD_Value = 0 ;
+volatile uint8 KPD_opera = 0 ;
+volatile uint8 Counter_Space =1 ;
+volatile uint8 var1[10]  ;
+volatile uint8 Counter_var1 =0 ;
+volatile uint8 Division_temp  = 0 ;
+volatile uint8 Minus_temp  = 0 ;
+volatile uint8 ret_Number_String[1] = {0} ;
+volatile uint8 Num_Of_Trying = 0 ;
+
+static uint8 Valid_Password[7] = {1,2,3,4,5,6 };
+/****************************** ^-^ Main Function Start ^-^ ***********************/
+int main() 
+{
+    Std_ReturnType ret = E_NOK ;
+    application_initialize();
+    usart_module_init();
+    uint8 Display_counter =0 ;
+    uint8 Check_ret_app =0 ;
+    ret = LCD_4bit_Send_Command(&lcd_1 , _LCD_CLEAR);
+    ret = LCD_4bit_Send_String_Pos(&lcd_1 , " Welcome to ......" , 1 , 1 );
+    ret = LCD_4bit_Send_String_Pos(&lcd_1 , "Ziad Home" , 2 , 3 );
+    __delay_ms(2000);
+    ret = LCD_4bit_Send_Command(&lcd_1 , _LCD_CLEAR);
+    while(1)
+    {
+            if(Num_Of_Trying < 3)
+            {
+                ret = LCD_4bit_Send_String_Pos(&lcd_1 , "Enter Password : " , 1 , 1);
+                ret = Keypad_get_value(&Keypad_1 , &KPD_Value);
+                if (KPD_Value == '=')                               /* Check Password  validation */
+                {
+                       Check_ret_app = Check_Password_Validation (var1 , Counter_var1);
+                       if(Check_ret_app  == 0 )
+                       {
+                           Restart_system();
+                           Num_Of_Trying++; 
+                       }
+                       else 
+                       {
+                            Num_Of_Trying =0 ;
+                            ret = EUSART_ASYNC_WriteByteBlocking('o');            // o : ok
+                            ret = LCD_4bit_Send_Command(&lcd_1 , _LCD_CLEAR);
+                            ret = LCD_4bit_Send_String_Pos(&lcd_1 , " Congratulation" , 1 , 1 );
+                            ret = LCD_4bit_Send_String_Pos(&lcd_1 , "Valid Password" , 2 , 1 );
+                            ret = LCD_4bit_Send_String_Pos(&lcd_1 , " Gate is opening now" , 3 , 1 );
+                            ret = dc_motor_move_right(&Motor_1);    // For opening the Gate
+                            __delay_ms(500);
+                            ret = dc_motor_move_left(&Motor_1);    // For closing the Gate
+                            ret = LCD_4bit_Send_Command(&lcd_1 , _LCD_CLEAR);
+                            ret = LCD_4bit_Send_String_Pos(&lcd_1 , " Gate is closing now" , 1 , 1 );
+                            __delay_ms(500);
+                            ret = LCD_4bit_Send_Command(&lcd_1 , _LCD_CLEAR);
+                           break; 
+                       }
+                       KPD_Value  = '\0' ;
+                }
+                if (KPD_Value != '\0')
+                {
+                    if ((KPD_Value==' ') ||(KPD_Value=='9') || (KPD_Value=='8') || (KPD_Value=='7') || (KPD_Value=='6') || (KPD_Value=='5') || (KPD_Value=='4') || (KPD_Value=='3') || (KPD_Value=='2') || (KPD_Value=='1') || (KPD_Value=='0'))
+                    {
+                        var1[Counter_var1] = Keypad_Convert_from_char_to_int(KPD_Value);
+                        ret = LCD_4bit_Send_Char_Data_Pos(&lcd_1 ,KPD_Value, 2 , Counter_Space);
+                        __delay_ms(250);
+                        ret = LCD_4bit_Send_Char_Data_Pos(&lcd_1 , '*' , 2 , Counter_Space);
+                        Counter_Space++;
+                        Counter_var1++;
+                        KPD_Value  = '\0' ;
+                    }
+                    else if(KPD_Value == '/')                     /* For display Password  */
+                    {
+                        Division_temp  = Counter_Space ;
+                        Counter_Space = 1 ;
+                        for(Display_counter =0 ; Display_counter<Counter_var1 ; Display_counter++)
+                        {
+                            ret = convert_uint8_to_string(var1[Display_counter] , ret_Number_String );
+                            ret = LCD_4bit_Send_String_Pos(&lcd_1 ,ret_Number_String , 2 , (Counter_Space+Display_counter));
+                        }
+                        Counter_Space = Division_temp ;
+                        KPD_Value  = '\0' ;
+                    }
+                    else if (KPD_Value == '-')                      /* For disapper Password  */
+                    {
+                        Minus_temp  = Counter_Space ;
+                        Counter_Space = 1 ;
+                        for(Display_counter =0 ; Display_counter<=Counter_var1 ; Display_counter++)
+                        {
+                            ret = LCD_4bit_Send_Char_Data_Pos(&lcd_1 , '*' , 2 , Display_counter);
+                        }
+                        Counter_Space = Minus_temp ;
+                        KPD_Value  = '\0' ;
+                    }
+                    else { /* Nothing */ }
+                }
+               else { /* Nothing */ }
+            }
+            else
+            {
+                ret = LCD_4bit_Send_Command(&lcd_1 , _LCD_CLEAR);
+                ret = LCD_4bit_Send_String_Pos(&lcd_1 , " For Sorry ......" , 1 , 1 );
+                ret = LCD_4bit_Send_String_Pos(&lcd_1 , "Your attempts are over" , 2 , 1 );
+                ret = LCD_4bit_Send_String_Pos(&lcd_1 , "Restart application " , 4 , 5 );
+                __delay_ms(2000);
+            }
+        }
+    return (EXIT_SUCCESS);
+}
+/****************************** ^-^ Main Function End ^-^ ************************/
+/******************* ^-^ application_initialize Function Start ^-^ ****************/
+void application_initialize (void)
+{
+    Std_ReturnType ret = E_NOK ;
+    ecu_layer_initialize();
+    ret = LCD_4bit_Initialize(&lcd_1);
+    ret = buz_intialize(&buz1);
+    ret = Keypad_initialize(&Keypad_1);
+    ret = dc_motor_initialize(&Motor_1);
+    ret = dc_motor_initialize(&Motor_2);
+    ret = Interrupt_RBx_Initialize(&rb4_int_obj);
+}
+/******************* ^-^ application_initialize Function End ^-^ *****************/
+/******************* ^-^ Helper Function ^-^ *****************/
+uint8 Check_Password_Validation (uint8 Arr[10] , uint8 Arr_Length )
+{
+    Std_ReturnType ret = E_NOK ;
+    uint8 L_counter = 0 ;
+    uint8 check_ret = 0 ;
+    
+    for (L_counter = 0 ; L_counter<=Arr_Length ; L_counter++)
+    {
+        if(Arr[L_counter] != Valid_Password[L_counter] )
+        {
+            check_ret = 0 ;                                              // 0 : For Invalid Password
+            ret = buz_turn_on(&buz1);
+            __delay_ms(250);
+            ret = buz_turn_off(&buz1);
+            __delay_ms(500);
+            ret = LCD_4bit_Send_Command(&lcd_1 , _LCD_CLEAR);
+            ret = LCD_4bit_Send_String_Pos(&lcd_1 , " Invalid Password" , 1 , 1 );
+            ret = LCD_4bit_Send_String_Pos(&lcd_1 , "Please try again" , 2 , 1 );
+            __delay_ms(1000);
+            ret = LCD_4bit_Send_Command(&lcd_1 , _LCD_CLEAR);
+            break ;
+        }
+        else
+        {
+            check_ret= 1 ;                                              // 1 : For valid Password
+        }
+    }
+    return check_ret;
+}
+
+void Restart_system (void)
+{
+    uint8 Restart_counter = 0 ;
+    KPD_Value = 0 ;
+    KPD_opera = 0 ;
+    Counter_Space = 1 ;
+    for (Restart_counter = 0 ; Restart_counter<10 ; Restart_counter++)
+    {
+        var1[Restart_counter] = 0 ;
+    }
+    Counter_var1 =0 ;
+    Division_temp  = 0 ;
+    Minus_temp  = 0 ;
+    ret_Number_String[1] = 0 ;
+}
+
+void RB4_HIGH_Int_App_ISR(void)
+{
+    Std_ReturnType ret = E_OK ;
+    ret= dc_motor_move_right(&Motor_2);
+}
+void RB4_LOW_Int_App_ISR(void)
+{
+    Std_ReturnType ret = E_OK ;
+    ret= dc_motor_stop(&Motor_2);
+}
