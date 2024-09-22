@@ -38,6 +38,12 @@
        g) Relay
          * Relay
          * Relay_Config
+       h) LED
+         * LED
+         * LED_config
+       i) Buzzer
+         * Buzzer
+         * Buzzer_config
 ------------------------------------------------------------------------------------------------------------------------
  ### 3) __Application Layer__
        a) applicaion ( in header file )
