@@ -1,0 +1,231 @@
+/* 
+ * File:   application.c
+ * Author: Ziad Elmekawy 
+ *
+ * Created on 25 August, 2024
+ */
+/******************* ^-^ Includes ^-^ *****************/
+#include "application.h"
+#include "ECU_Layer/Char_LCD/ecu_char_lcd.h"
+#include "ECU_Layer/Buzzer/ecu_buzzer.h"
+#include "ECU_Layer/DC_Motor/ecu_dc_motor.h"
+#include "ECU_Layer/LED/ecu_led.h"
+#include "MCAL_Layer/ADC/hal_ADC.h"
+#include "MCAL_Layer/Interrupt/mcal_external_interrupt.h"
+#include "MCAL_Layer/USART/hal_usart.h"
+
+/******************* ^-^ Macro Definition ^-^ *****************/
+
+/******************* ^-^ Helper Function ^-^ *****************/
+void RB4_HIGH_Int_App_ISR(void);
+void RB4_LOW_Int_App_ISR(void);
+void RB5_HIGH_Int_App_ISR(void);
+void RB5_LOW_Int_App_ISR(void);
+void RB6_HIGH_Int_App_ISR(void);
+void RB6_LOW_Int_App_ISR(void);
+void init_ultrasonic(void);
+uint16 measure_distance(void);
+void init_timer(void);
+
+
+/******************* ^-^ Object Declaration ^-^ *****************/
+// BUZZER
+buz_t buz3 = 
+{
+    .port_name = PORTB_INDEX ,
+    .pin = PIN7 ,
+    .buz_status = GPIO_LOW
+};
+
+// INT RBx
+interrupt_RBx_t rb4_int_obj_flame = 
+{
+    .EXT_InterruptHandlerHigh = RB4_HIGH_Int_App_ISR ,
+    .EXT_InterruptHandlerLow  = RB4_LOW_Int_App_ISR ,
+    .priority = INTERRUPT_HIGH_PRIORITY ,
+    .mcu_pin.port = PORTB_INDEX ,
+    .mcu_pin.pin = PIN4 ,
+    .mcu_pin.direction = GPIO_DIRECTION_INPUT 
+}; 
+interrupt_RBx_t rb5_int_obj_Gas = 
+{
+    .EXT_InterruptHandlerHigh = RB5_HIGH_Int_App_ISR ,
+    .EXT_InterruptHandlerLow  = RB5_LOW_Int_App_ISR ,
+    .priority = INTERRUPT_HIGH_PRIORITY ,
+    .mcu_pin.port = PORTB_INDEX ,
+    .mcu_pin.pin = PIN5 ,
+    .mcu_pin.direction = GPIO_DIRECTION_INPUT 
+}; 
+interrupt_RBx_t rb6_int_obj_TV = 
+{
+    .EXT_InterruptHandlerHigh = RB6_HIGH_Int_App_ISR ,
+    .EXT_InterruptHandlerLow  = RB6_LOW_Int_App_ISR ,
+    .priority = INTERRUPT_HIGH_PRIORITY ,
+    .mcu_pin.port = PORTB_INDEX ,
+    .mcu_pin.pin = PIN6 ,
+    .mcu_pin.direction = GPIO_DIRECTION_INPUT 
+}; 
+
+// LM35 Temperature Sensor 
+adc_config_t LM35 = {
+    .ADC_InterruptHandler = NULL,
+    .acquisition_time = ADC_12_TAD,
+    .adc_channel = ADC_CHANNEL_AN0,
+    .conversion_clock = ADC_CONVERSION_CLOCK_FOSC_DIV_16,
+    .result_format = ADC_RESULT_RIGHT,
+    .voltage_reference = ADC_VOLTAGE_REFRENCE_DISABLE
+};
+
+// Motor
+dc_motor_t Motor_5 =
+{
+   .dc_motor_pin[0].port = PORTD_INDEX , 
+   .dc_motor_pin[0].pin  = PIN1 ,
+   .dc_motor_pin[0].direction = GPIO_DIRECTION_OUTPUT ,
+   .dc_motor_pin[0].logic = GPIO_LOW ,
+   
+   .dc_motor_pin[1].port = PORTD_INDEX , 
+   .dc_motor_pin[1].pin  = PIN2 ,
+   .dc_motor_pin[1].direction = GPIO_DIRECTION_OUTPUT ,
+   .dc_motor_pin[1].logic = GPIO_LOW 
+};
+
+// LED
+led_t TV_LED = 
+{
+    .port_name = PORTD_INDEX ,
+    .pin = PIN5 ,
+    .led_status = GPIO_LOW
+};
+led_t AC_LED = 
+{
+    .port_name = PORTD_INDEX ,
+    .pin = PIN6 ,
+    .led_status = GPIO_LOW
+};
+led_t Light_LED = 
+{
+    .port_name = PORTD_INDEX ,
+    .pin = PIN7 ,
+    .led_status = GPIO_LOW
+};
+
+void usart_module_init(void)
+{
+    Std_ReturnType ret = E_NOK ;
+    usart_t usart_obj ;
+    /* Baud rate Initialize */
+    usart_obj.baudrate = 9600;
+    usart_obj.baudrate_gen_config = BAUDRATE_ASYN_8BIT_LOW_SPEED ;
+    /* Transmit Initialize */
+    usart_obj.usart_tx_cfg.usart_tx_enable = EUSART_ASYNCHRONOUS_TX_DISABLE ;
+    usart_obj.usart_tx_cfg.usart_tx_interrupt_enable = EUSART_ASYNCHRONOUS_INTERRUPT_TX_DISABLE ;
+    usart_obj.usart_tx_cfg.usart_tx_9bit_enable = EUSART_ASYNCHRONOUS_9BIT_TX_DISABLE ;
+    /* Receiver Initialize */
+    usart_obj.usart_rx_cfg.usart_rx_enable = EUSART_ASYNCHRONOUS_RX_ENABLE ;
+    usart_obj.usart_rx_cfg.usart_rx_interrupt_enable = EUSART_ASYNCHRONOUS_INTERRUPT_RX_DISABLE ;
+    usart_obj.usart_rx_cfg.usart_rx_9bit_enable = EUSART_ASYNCHRONOUS_9BIT_RX_DISABLE ;
+    /* Pointers Initialize */
+    usart_obj.EUSART_TxDefaultInterruptHandler = NULL ;
+    usart_obj.EUSART_RxDefaultInterruptHandler = NULL ;
+    usart_obj.EUSART_FramingErrorHandler = NULL ;
+    usart_obj.EUSART_OverrunErrorHandler = NULL ;
+    
+    /* Initialization Function */
+    ret = EUSART_ASYNC_Init(&usart_obj);
+}
+
+/* ======= Global Variables ======= */
+volatile uint16 lm35_res_1 = 0;
+volatile uint16 lm35_res_1_Celsius_mv = 0;
+volatile uint8 lm35_res_1_txt[3];
+volatile uint8 l_rec_usart_data = 0 ; 
+
+/****************************** ^-^ Main Function Start ^-^ ***********************/
+int main() 
+{
+    Std_ReturnType ret = E_NOK ;
+    application_initialize();
+    usart_module_init();
+    while(1)
+    {
+        ret = EUSART_ASYNC_ReadByteBlocking(&l_rec_usart_data);
+        if(247 == l_rec_usart_data )
+        {
+            // Light 
+            ret = led_turn_on(&Light_LED);
+            /* ^-^ Sensors ^-^ */
+                // Temperature 
+            ret = ADC_GetConversion_Blocking(&LM35, &lm35_res_1, ADC_CHANNEL_AN0);
+            lm35_res_1_Celsius_mv = lm35_res_1 * 4.88f; /* 5000(mv) / 1024(10-Bit) => 4.88 */
+            lm35_res_1_Celsius_mv /= 10; /* The sensitivity of LM35 is 10 mV/degree Celsius */
+            ret = convert_uint16_to_string(lm35_res_1_Celsius_mv, lm35_res_1_txt);
+            if (lm35_res_1_Celsius_mv > 30)
+            {
+                ret = led_turn_on(&AC_LED);
+            }
+            else 
+            {
+                ret = led_turn_off(&AC_LED);
+            }
+        }
+    }
+    return (EXIT_SUCCESS);
+}
+/****************************** ^-^ Main Function End ^-^ ************************/
+/******************* ^-^ application_initialize Function Start ^-^ ****************/
+void application_initialize (void)
+{
+    Std_ReturnType ret = E_NOK ;
+    ecu_layer_initialize();
+    ret = led_intialize(&AC_LED);
+    ret = led_intialize(&Light_LED);
+    ret = led_intialize(&TV_LED);
+    ret = buz_intialize(&buz3);
+    ret = dc_motor_initialize(&Motor_5);
+    ret = Interrupt_RBx_Initialize(&rb4_int_obj_flame);
+    ret = Interrupt_RBx_Initialize(&rb5_int_obj_Gas);
+    ret = Interrupt_RBx_Initialize(&rb6_int_obj_TV);
+    ret = ADC_Init(&LM35);
+}
+/******************* ^-^ application_initialize Function End ^-^ *****************/
+/******************* ^-^ Helper Function ^-^ *****************/
+// Fire
+void RB4_HIGH_Int_App_ISR(void)
+{
+    Std_ReturnType ret = E_NOK ;
+    ret = dc_motor_move_right(&Motor_5);
+    ret = buz_turn_on(&buz3);
+}
+void RB4_LOW_Int_App_ISR(void)
+{
+    Std_ReturnType ret = E_NOK ;
+    ret = dc_motor_stop(&Motor_5);
+    ret = buz_turn_off(&buz3);
+    
+}
+// Gas
+void RB5_HIGH_Int_App_ISR(void)
+{
+    Std_ReturnType ret = E_NOK ;
+    ret = led_turn_on(&AC_LED);
+    ret = buz_turn_on(&buz3);
+}
+void RB5_LOW_Int_App_ISR(void)
+{
+    Std_ReturnType ret = E_NOK ;
+    ret = led_turn_off(&AC_LED);
+    ret = buz_turn_off(&buz3);
+}
+
+// TV
+void RB6_HIGH_Int_App_ISR(void)
+{
+    Std_ReturnType ret = E_NOK ;
+    ret = led_turn_on(&TV_LED);
+}
+void RB6_LOW_Int_App_ISR(void)
+{
+    Std_ReturnType ret = E_NOK ;
+    ret = led_turn_off(&TV_LED);
+}
